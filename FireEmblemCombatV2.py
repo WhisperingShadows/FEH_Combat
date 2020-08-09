@@ -50,12 +50,35 @@ CONFIG = {
 grid = Graph.init_as_grid(6, 8)
 
 
+#============================================================================================================
+# MODULE LEVEL VARIABLE DEFINITIONS START
+
+weapon_advantage = {
+    "Red": "Green",
+    "Blue": "Red",
+    "Green": "Blue"
+}
+
+# MODULE LEVEL VARIABLE DEFINITIONS END
+#============================================================================================================
+
+
+#============================================================================================================
+# CUSTOM EXCEPTIONS DEFINITIONS START
+
 class SkillIsIncorrectCategoryException(Exception):
     pass
+
 
 class InvalidWeapon(Exception):
     pass
 
+# CUSTOM EXCEPTIONS DEFINITIONS START
+#============================================================================================================
+
+
+#============================================================================================================
+# CLASS DEFINITIONS START
 
 class ArbitraryAttributeClass:
     def __init__(self, **kwargs):
@@ -388,9 +411,13 @@ class Weapon(Skill):
         # FIXME: This can probably be combined and made more compact
         prereqs = list(filter(lambda pr: pr is not None, weapon.prerequisites))
         if len(prereqs) == 0:
-            # do stuff in weapon.json
-            base_weapon_class = weapon_data_by_base_weapon_id[weapon.id_tag]
-            pass
+            if weapon.id_tag in weapon_data_by_base_weapon_id:
+                # do stuff in weapon.json
+                base_weapon_class = weapon_data_by_base_weapon_id[weapon.id_tag]
+            else:
+                bin_list = list(map(int, list(bin(weapon.mov_equip)[2:])))
+                base_weapon_class = weapon_data_by_index[len(bin_list) - 1 - bin_list.index(1)]
+
         else:
             prereq = prereqs[0]
             while True:
@@ -482,7 +509,6 @@ class Character(ArbitraryAttributeClass):
 
         self.equip_weapon(weapon=self.weapon)
 
-
     # TODO: Add in support for automatic skill/weapon generation for TT and the like
     # checks whether character may possess weapon
     def validate_weapon(self, weapon):
@@ -493,11 +519,14 @@ class Character(ArbitraryAttributeClass):
 
         # checks if character is of correct weapon type and move type
         if in_bitmask(self.weapon_type, weapon.wep_equip) and in_bitmask(self.move_type, weapon.mov_equip):
+
+            # FIXME: Does not currently support refined weapons
+            # Idea for refined weapons: check num of underscores, greater than 1, remove suffix and check base
             if weapon.exclusive:
                 # checks if character owns exclusive weapon
                 owns_weapon = False
                 for skillset in self.skills:
-                    if weapon in skillset:
+                    if weapon.id_tag in skillset:
                         owns_weapon = True
                         break
                 if not owns_weapon:
@@ -553,7 +582,6 @@ class Character(ArbitraryAttributeClass):
         else:
             self.unequip_weapon()
 
-
     def unequip_weapon(self):
         if self.weapon is not None:
             if isinstance(self.weapon, Weapon):
@@ -564,7 +592,17 @@ class Character(ArbitraryAttributeClass):
 
             self.weapon = None
 
+    def get_distance_to(self, enemy):
+        get_distance(self, enemy)
 
+    # TODO: Work on this next coding session
+    # def calc_weapon_triangle(self, enemy):
+    #     if enemy.color == weapon_advantage[self.color]:
+    #         return 0.2
+    #     elif self.color == weapon_advantage[enemy.color]:
+    #         return -0.2
+    #     elif self.color == enemy.color or self.color == "gray" or enemy.color == "gray":
+    #         return 0
 
 
 class Enemy(Character):
@@ -577,13 +615,26 @@ class Player(Character):
         super().__init__(**kwargs)
 
 
+# CLASS DEFINITIONS END
+#============================================================================================================
+
+
+# load all necessary data from JSON files
 skills_data, players_data, enemies_data, weapons_data, english_data, growth_data, move_data, stage_encount_data, \
     terrain_data = load_files(Skill, Player, Enemy, Weapon, output_as_class=False)
 
 weapon_data_by_index = {v["index"]: v for v in weapons_data[1].values()}
 
-# weapon_index_to_color_dict = {k: v for k, v in zip([i for i in range(24)],
-#                                [1, 2, 3, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 0, 1, 2, 3, 0, 1, 2, 3, 0])}
+
+weapon_index_to_color_dict = {k: v for k, v in zip([i for i in range(24)],
+                               [1, 2, 3, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 0, 1, 2, 3, 0, 1, 2, 3, 0])}
+
+
+#============================================================================================================
+# GENERAL FUNCTION DEFINITIONS START
+
+def get_distance(self: Character, enemy: Character):
+    return abs(enemy.pos[0] - self.pos[0]) + abs(enemy.pos[1] - self.pos[1])
 
 def in_bitmask(nums, bitmask: int):
     bitmask_list = list(map(int, list(bin(bitmask)[::-1][:-2])))
@@ -602,6 +653,33 @@ def in_bitmask(nums, bitmask: int):
             in_bitmask_dict[num] = False
     return in_bitmask_dict
 
+
+def pos(expr):
+    if expr < 0:
+        return 0
+    return expr
+
+
+def neg(expr):
+    if expr > 0:
+        return 0
+    return expr
+
+
+def print_grid(grid):
+    x, y = grid.get_grid_width_height()
+
+    for iy in reversed(range(0, y)):
+        row = []
+        for ix in range(0, x):
+            held = grid.nodes[iy * x + ix].holds
+            if held == None:
+                row.append("  ")
+            elif held.__class__ == Enemy:
+                row.append("x ")
+            elif held.__class__ == Player:
+                row.append("O ")
+        print(row)
 
 def find_inconsistencies():
     for index in [9, 10, 11, 12, 13]:
@@ -637,51 +715,19 @@ def find_inconsistencies():
         print("Index", index, "has", temp_set)
         print("")
 
-
-def pos(expr):
-    if expr < 0:
-        return 0
-    return expr
-
-
-def neg(expr):
-    if expr > 0:
-        return 0
-    return expr
-
-
-def print_grid(grid):
-    x, y = grid.get_grid_width_height()
-
-    for iy in reversed(range(0, y)):
-        row = []
-        for ix in range(0, x):
-            held = grid.nodes[iy * x + ix].holds
-            if held == None:
-                row.append("  ")
-            elif held.__class__ == Enemy:
-                row.append("x ")
-            elif held.__class__ == Player:
-                row.append("O ")
-        print(row)
-
+# GENERAL FUNCTION DEFINITIONS END
+#============================================================================================================
 
 def program_instructions():
-
-
     testchar = Character.from_dict(players_data[1]["PID_クライネ"], weapon="SID_鉄の弓")
-    print(testchar.weapon)
     testchar.unequip_weapon()
-    print(testchar.weapon)
-    testchar.equip_weapon("SID_クライネの弓＋")
-    print(testchar.weapon)
+    testchar.equip_weapon("SID_狙撃手の弓")
 
     name = translate_jp_to_en_dict(skills_data[1]["SID_ジークリンデ"], english_data, is_skill=True)
 
     char_wep = Weapon.from_dict(skills_data[0][name])
 
     char = Character.from_dict(players_data[0]["EIRIK"], pos=(1, 1))
-
 
     pass
 
@@ -690,5 +736,5 @@ if __name__ == "__main__":
     prog_start = time()
     program_instructions()
     prog_stop = time()
-    print("\nTime elapsed:", prog_stop-prog_start)
+    print("\nTime elapsed:", prog_stop - prog_start)
     print("Program execution complete; terminating process")
