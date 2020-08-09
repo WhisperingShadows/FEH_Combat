@@ -49,8 +49,36 @@ CONFIG = {
 # TODO: rework for compatibility with FEH maps (ex. initialize from map file or dict of tiles)
 grid = Graph.init_as_grid(6, 8)
 
+
+#============================================================================================================
+# MODULE LEVEL VARIABLE DEFINITIONS START
+
+weapon_advantage = {
+    "Red": "Green",
+    "Blue": "Red",
+    "Green": "Blue"
+}
+
+# MODULE LEVEL VARIABLE DEFINITIONS END
+#============================================================================================================
+
+
+#============================================================================================================
+# CUSTOM EXCEPTIONS DEFINITIONS START
+
 class SkillIsIncorrectCategoryException(Exception):
     pass
+
+
+class InvalidWeapon(Exception):
+    pass
+
+# CUSTOM EXCEPTIONS DEFINITIONS START
+#============================================================================================================
+
+
+#============================================================================================================
+# CLASS DEFINITIONS START
 
 class ArbitraryAttributeClass:
     def __init__(self, **kwargs):
@@ -75,14 +103,13 @@ class ArbitraryAttributeClass:
 
 class Switch:
     @classmethod
-    def validate_character_attribute(cls, key, value, verbose = False):
+    def validate_character_attribute(cls, key, value, verbose=False):
 
         # Create default return function
         # *args consumes "value" argument
         def default(*args):
             if verbose:
                 print("No validation method exists for {0}, defaulting to valid".format(key))
-
 
         # Select validation method
         method_name = 'validate_' + str(key)
@@ -141,7 +168,6 @@ class Skill(ArbitraryAttributeClass):
         super().__init__(**kwargs)
 
     def init_self_attributes(self):
-
         # Full internal string identifier of the skill e.g. SID_ジークリンデ_共 for Sieglinde
         self.id_tag = None
         # Internal string identifier of the unrefined version of the weapon e.g. SID_ジークリンデ
@@ -291,7 +317,6 @@ class Skill(ArbitraryAttributeClass):
         # (Death Blow 3 pointed to Death Blow 4 even before the CYL2 update.)
         self.passive_next = None
 
-
         # A POSIX timestamp relative to the skill's release date; half a month into the future for skills
         # released before Version 2.0.0, 1 month into the future for skills released since Version 2.0.0.
         # This skill may be equipped by random units if timestamp is -1 or the current time is past timestamp.
@@ -316,7 +341,6 @@ class Skill(ArbitraryAttributeClass):
         #   - 2: This skill may be equipped by random units that own the skill.
         self.random_mode = None
 
-
         # Unknown usage
         # self.range_shape = range_shape
         # self.id_tag2 = id_tag2
@@ -330,12 +354,87 @@ class Skill(ArbitraryAttributeClass):
         pass
 
 
-class Character(ArbitraryAttributeClass):
+# NOT TO BE CONFUSED WITH THE WEAPON CLASS
+# This refers to the a weapon's base weapon-class.
+# For example, the base weapon class of Clarisse's Sniper's Bow is colorless bow
+class WeaponClass(ArbitraryAttributeClass):
+    def __init__(self, **kwargs):
+        self.init_self_attributes()
+        super().__init__(**kwargs)
+
+    def init_self_attributes(self):
+        self.id_tag = None
+        self.sprite_base = None
+        self.base_weapon = None
+        self.index = None
+        self.color = None
+        self.range = None
+        self._unknown1 = None
+        self.sort_id = None
+        self.equip_group = None
+        self.res_damage = None
+        self.is_staff = None
+        self.is_dagger = None
+        self.is_breath = None
+        self.is_beast = None
+
+    # def __eq__(self, other):
+    #     if isinstance(other, WeaponClass):
+    #         return self.id_tag == other.id_tag
+    #     elif isinstance(other, int):
+    #         return self.index == other
+    #     elif isinstance(other, str):
+    #         return self.id_tag == other
+    #     else:
+    #         raise TypeError("Type WeaponClass and type {0} cannot be compared".format(type(other)))
+    #     pass
+
+
+class Weapon(Skill):
     def __init__(self, **kwargs):
         self.init_self_attributes()
         super().__init__(**kwargs)
         self.set_attribute_values()
 
+    def init_self_attributes(self):
+        super().init_self_attributes()
+        self.weapon_class = None
+
+    def set_attribute_values(self):
+        if not self.weapon_class:
+            self.weapon_class = self.get_base_weapon_class(self)
+
+    @staticmethod
+    def get_base_weapon_class(weapon):
+        weapon_data_by_base_weapon_id = {v["base_weapon"]: v for v in weapons_data[1].values()}
+
+        # FIXME: This can probably be combined and made more compact
+        prereqs = list(filter(lambda pr: pr is not None, weapon.prerequisites))
+        if len(prereqs) == 0:
+            if weapon.id_tag in weapon_data_by_base_weapon_id:
+                # do stuff in weapon.json
+                base_weapon_class = weapon_data_by_base_weapon_id[weapon.id_tag]
+            else:
+                bin_list = list(map(int, list(bin(weapon.mov_equip)[2:])))
+                base_weapon_class = weapon_data_by_index[len(bin_list) - 1 - bin_list.index(1)]
+
+        else:
+            prereq = prereqs[0]
+            while True:
+                prereqs = list(filter(lambda pr: pr is not None, skills_data[1][prereq]["prerequisites"]))
+                if len(prereqs) == 0:
+                    base_weapon_class = weapon_data_by_base_weapon_id[prereq]
+                    break
+                else:
+                    prereq = prereqs[0]
+        return WeaponClass.from_dict(base_weapon_class)
+
+
+class Character(ArbitraryAttributeClass):
+    def __init__(self, **kwargs):
+        self.init_self_attributes()
+        super().__init__(**kwargs)
+        self.set_attribute_values()
 
     def __setattr__(self, key, value):
 
@@ -344,8 +443,8 @@ class Character(ArbitraryAttributeClass):
         else:
             raise ValueError("Invalid value supplied for {0} attribute of {1}".format(key, self))
 
-        pass
-
+    def __repr__(self):
+        return "{0}, {1} ({2} object with id {3})".format(self.id_tag, self.roman, self.__class__, id(self))
 
     def init_self_attributes(self):
 
@@ -386,6 +485,7 @@ class Character(ArbitraryAttributeClass):
         self.rarity = None
         self.level = None
         self.weapon = None
+        self.weapon_class = None
         self.stats = None
 
     # sets default values for character attributes
@@ -401,20 +501,45 @@ class Character(ArbitraryAttributeClass):
             self.rarity = 3
         if not self.level:
             self.level = 1
-        # this doesn't seem right. What happens if character is created with weapon attribute defined?
-        if not self.weapon:
-            self.equip_weapon()
+        if not self.stats:
+            self.stats = self.base_stats
 
-    def equip_weapon(self, **kwargs):
+        if not self.weapon_class:
+            self.weapon_class = WeaponClass.from_dict(weapon_data_by_index[self.weapon_type])
 
-        if not "weapon" in kwargs:
-            self.weapon = self.get_weapon()
+        self.equip_weapon(weapon=self.weapon)
 
-        else:
-            self.weapon = Weapon.from_dict(skills_data[1][kwargs["weapon"]])
+    # TODO: Add in support for automatic skill/weapon generation for TT and the like
+    # checks whether character may possess weapon
+    def validate_weapon(self, weapon):
+        """
 
+        :type weapon: Weapon
+        """
 
-        pass
+        # checks if character is of correct weapon type and move type
+        if in_bitmask(self.weapon_type, weapon.wep_equip) and in_bitmask(self.move_type, weapon.mov_equip):
+
+            # FIXME: Does not currently support refined weapons
+            # Idea for refined weapons: check num of underscores, greater than 1, remove suffix and check base
+            if weapon.exclusive:
+                # checks if character owns exclusive weapon
+                owns_weapon = False
+                for skillset in self.skills:
+                    if weapon.id_tag in skillset:
+                        owns_weapon = True
+                        break
+                if not owns_weapon:
+                    return False
+
+            if weapon.enemy_only:
+                # checks if character is an enemy
+                if not (self.__class__ == Enemy or self.id_tag.startswith("EID_")):
+                    return False
+
+            return True
+
+        return False
 
     def get_weapon(self):
         weapon = None
@@ -423,14 +548,61 @@ class Character(ArbitraryAttributeClass):
         if skills_data[1][weapon]["category"] == 0:
             return Weapon.from_dict(skills_data[1][weapon])
         else:
-            raise SkillIsIncorrectCategoryException(str("Weapon should be a category 0 skill, received category " + str(skills_data[1][weapon]["category"]) + " skill instead"))
+            raise SkillIsIncorrectCategoryException(str("Weapon should be a category 0 skill, received category " + str(
+                skills_data[1][weapon]["category"]) + " skill instead"))
         pass
 
+    # handles equipping a weapon to a character
+    def equip_weapon(self, weapon: str):
+        if weapon is not None:
+            # create weapon object from weapon id
+            weapon = Weapon.from_dict(skills_data[1][weapon])
+            # check whether character can equip weapon
+            if self.validate_weapon(weapon):
 
+                # if character already has a weapon equipped, unequip it
+                if self.weapon:
+                    self.unequip_weapon()
 
-class Weapon(ArbitraryAttributeClass):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+                # add weapon's might to character's attack stat
+                self.stats["atk"] += weapon.might
+
+                # add weapon's stat bonuses to character's stats (separate from might)
+                for stat in weapon.stats:
+                    self.stats[stat] += weapon.stats[stat]
+
+                # set character's weapon attribute to weapon
+                self.weapon = weapon
+
+            else:
+                # if weapon fails to pass validation, character cannot equip weapon
+                raise InvalidWeapon("Character {0} does not have access to weapon {1}".format(self, weapon.id_tag))
+
+        # if weapon to equip is None, unequip weapon
+        else:
+            self.unequip_weapon()
+
+    def unequip_weapon(self):
+        if self.weapon is not None:
+            if isinstance(self.weapon, Weapon):
+                self.stats["atk"] -= self.weapon.might
+
+                for stat in self.weapon.stats:
+                    self.stats[stat] -= self.weapon.stats[stat]
+
+            self.weapon = None
+
+    def get_distance_to(self, enemy):
+        get_distance(self, enemy)
+
+    # TODO: Work on this next coding session
+    # def calc_weapon_triangle(self, enemy):
+    #     if enemy.color == weapon_advantage[self.color]:
+    #         return 0.2
+    #     elif self.color == weapon_advantage[enemy.color]:
+    #         return -0.2
+    #     elif self.color == enemy.color or self.color == "gray" or enemy.color == "gray":
+    #         return 0
 
 
 class Enemy(Character):
@@ -443,51 +615,43 @@ class Player(Character):
         super().__init__(**kwargs)
 
 
+# CLASS DEFINITIONS END
+#============================================================================================================
+
+
+# load all necessary data from JSON files
 skills_data, players_data, enemies_data, weapons_data, english_data, growth_data, move_data, stage_encount_data, \
-terrain_data = load_files(Skill, Player, Enemy, Weapon, output_as_class=False)
+    terrain_data = load_files(Skill, Player, Enemy, Weapon, output_as_class=False)
 
-name = translate_jp_to_en_dict(skills_data[1]["SID_ジークリンデ"], english_data, is_skill=True)
-
-char_wep = Weapon.from_dict(skills_data[0][name])
-
-# pprint(char_wep.get_all_attrs())
-
-char = Character.from_dict(players_data[0]["EIRIK"], pos=(1,1))
+weapon_data_by_index = {v["index"]: v for v in weapons_data[1].values()}
 
 
-def find_inconsistencies():
-    for index in [9,10,11,12,13]:
-        skillList = []
-        cat = None
-        allSkills = {}
-        temp_set = set()
-        for key, value in players_data[1].items():
-            for rarity in range(5):
-                iskill = value["skills"][rarity][index]
+weapon_index_to_color_dict = {k: v for k, v in zip([i for i in range(24)],
+                               [1, 2, 3, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 0, 1, 2, 3, 0, 1, 2, 3, 0])}
 
-                if iskill is not None:
-                    allSkills[iskill] = (skills_data[1][iskill], key)
-                    skillList.append(skills_data[1][iskill]["category"])
-                    cat = skillList[0]
 
-        if len(set(skillList)) in [1, 0]:
-            print("Category is", cat, "for index", index)
+#============================================================================================================
+# GENERAL FUNCTION DEFINITIONS START
+
+def get_distance(self: Character, enemy: Character):
+    return abs(enemy.pos[0] - self.pos[0]) + abs(enemy.pos[1] - self.pos[1])
+
+def in_bitmask(nums, bitmask: int):
+    bitmask_list = list(map(int, list(bin(bitmask)[::-1][:-2])))
+
+    in_bitmask_dict = dict()
+
+    if isinstance(nums, int):
+        if len(bitmask_list) < nums:
+            return False
+        return True if bitmask_list[nums] == 1 else False
+
+    for num in nums:
+        if bitmask_list[num] == 1:
+            in_bitmask_dict[num] = True
         else:
-            print("Index", index, "is an aberrant")
-            print("Counts:", ["Cat "+str(i)+": "+str(skillList.count(i)) for i in set(skillList)])
-            temp_set = set(skillList)
-            temp_dict = {k: v for k,v in zip([skillList.count(i) for i in temp_set], [i for i in temp_set])}
-            wrong_cat = temp_dict[min(temp_dict.keys())]
-            print("Wrong cat:", wrong_cat)
-            for iskill, tup in allSkills.items():
-                value = tup[0]
-                key = tup[1]
-                if value["category"] == wrong_cat:
-                    print("On hero:", key, "("+str(players_data[1][key]["roman"])+")\n\t", value["id_tag"], ",",translate_jp_to_en_dict(value, english_data, is_skill=True))
-
-        print("Index", index, "has", temp_set)
-        print("")
-
+            in_bitmask_dict[num] = False
+    return in_bitmask_dict
 
 
 def pos(expr):
@@ -517,16 +681,60 @@ def print_grid(grid):
                 row.append("O ")
         print(row)
 
+def find_inconsistencies():
+    for index in [9, 10, 11, 12, 13]:
+        skill_list = []
+        cat = None
+        all_skills = {}
+        temp_set = set()
+        for key, value in players_data[1].items():
+            for rarity in range(5):
+                iskill = value["skills"][rarity][index]
+
+                if iskill is not None:
+                    all_skills[iskill] = (skills_data[1][iskill], key)
+                    skill_list.append(skills_data[1][iskill]["category"])
+                    cat = skill_list[0]
+
+        if len(set(skill_list)) in [1, 0]:
+            print("Category is", cat, "for index", index)
+        else:
+            print("Index", index, "is an aberrant")
+            print("Counts:", ["Cat " + str(i) + ": " + str(skill_list.count(i)) for i in set(skill_list)])
+            temp_set = set(skill_list)
+            temp_dict = {k: v for k, v in zip([skill_list.count(i) for i in temp_set], [i for i in temp_set])}
+            wrong_cat = temp_dict[min(temp_dict.keys())]
+            print("Wrong cat:", wrong_cat)
+            for iskill, tup in all_skills.items():
+                value = tup[0]
+                key = tup[1]
+                if value["category"] == wrong_cat:
+                    print("On hero:", key, "(" + str(players_data[1][key]["roman"]) + ")\n\t", value["id_tag"], ",",
+                          translate_jp_to_en_dict(value, english_data, is_skill=True))
+
+        print("Index", index, "has", temp_set)
+        print("")
+
+# GENERAL FUNCTION DEFINITIONS END
+#============================================================================================================
 
 def program_instructions():
+    testchar = Character.from_dict(players_data[1]["PID_クライネ"], weapon="SID_鉄の弓")
+    testchar.unequip_weapon()
+    testchar.equip_weapon("SID_狙撃手の弓")
 
-    testchar = Character.from_dict(players_data[1]["PID_クライネ"], level = 20, rarity = 5)
+    name = translate_jp_to_en_dict(skills_data[1]["SID_ジークリンデ"], english_data, is_skill=True)
 
+    char_wep = Weapon.from_dict(skills_data[0][name])
 
+    char = Character.from_dict(players_data[0]["EIRIK"], pos=(1, 1))
 
     pass
 
 
 if __name__ == "__main__":
+    prog_start = time()
     program_instructions()
+    prog_stop = time()
+    print("\nTime elapsed:", prog_stop - prog_start)
     print("Program execution complete; terminating process")
