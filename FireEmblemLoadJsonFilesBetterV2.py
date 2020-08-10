@@ -232,27 +232,26 @@ def load_files(skill_class, player_class, enemy_class, weapon_class, output_as_c
                         my_dict[translated_name] = idict
                 else:
                     if output_as_class:
-                        # creates new entry that includes weapon type in key for old entry
-                        my_dict["PID_" + str(weapon_index_dict[my_dict[translated_name].weapon_type]).replace(" ", "")
+                        # creates new entry that includes id_num in key for old entry
+                        my_dict["PID_" + str(my_dict[translated_name].id_num).replace(" ", "")
                                 + "_" + str(translated_name).replace("PID_", "")] = my_dict[translated_name]
 
-                        # creates new entry that includes weapon type in key for duplicate entry
-                        my_dict["PID_" + str(weapon_index_dict[idict["weapon_type"]]).replace(" ", "") + "_" +
+                        # creates new entry that includes id_num in key for duplicate entry
+                        my_dict["PID_" + str(idict["id_num"]).replace(" ", "") + "_" +
                                 str(translated_name).replace("PID_", "")] = output_class.from_dict(input_dict=idict)
                     else:
-                        # creates new entry that includes weapon type in key for old entry
-                        my_dict["PID_" + str(weapon_index_dict[my_dict[translated_name]["weapon_type"]])
+                        # creates new entry that includes id_num in key for old entry
+                        my_dict["PID_" + str(my_dict[translated_name]["id_num"])
                             .replace(" ", "") + "_" + str(translated_name).replace("PID_", "")] \
                             = my_dict[translated_name]
 
-                        # creates new entry that includes weapon type in key for duplicate entry
-                        my_dict["PID_" + str(weapon_index_dict[idict["weapon_type"]]).replace(" ", "") + "_" +
+                        # creates new entry that includes id_num in key for duplicate entry
+                        my_dict["PID_" + str(idict["id_num"]).replace(" ", "") + "_" +
                                 str(translated_name).replace("PID_", "")] = idict
 
-                    # deletes old entry without weapon type in name
+                    # deletes old entry without id_num in name
                     del my_dict[translated_name]
 
-                    print("{0} is already in dict".format(translated_name))
 
             if output_class == enemy_class:
                 translated_name = translate_jp_to_en_dict(idict, english_data, prefix="MEID", old_prefix="EID")
