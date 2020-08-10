@@ -2,8 +2,8 @@ import json
 import os
 from time import time
 from dprint import dprint
-from FEH_definitions import weapon_index_dict
 
+# FIXME: Running this script as a standalone breaks everything
 
 def remove_digits(input_string: str) -> str:
     remove_digits_translation_table = str.maketrans('', '', "0123456789")
@@ -137,7 +137,7 @@ def my_merger(list_of_dicts):
 
 def load_files(skill_class, player_class, enemy_class, weapon_class, output_as_class=True, get_english_data=True,
                get_skills=True, get_characters=True, get_weapons=True, get_growth=True, get_move=True,
-               get_stage_encount=True, get_terrain=True):
+               get_stage_encount=True, get_terrain=True, check_for_update=False):
     # print("Starting")
     start = time()
 
@@ -242,7 +242,7 @@ def load_files(skill_class, player_class, enemy_class, weapon_class, output_as_c
                     else:
                         # creates new entry that includes id_num in key for old entry
                         my_dict["PID_" + str(my_dict[translated_name]["id_num"])
-                            .replace(" ", "") + "_" + str(translated_name).replace("PID_", "")] \
+                                .replace(" ", "") + "_" + str(translated_name).replace("PID_", "")] \
                             = my_dict[translated_name]
 
                         # creates new entry that includes id_num in key for duplicate entry
@@ -251,7 +251,6 @@ def load_files(skill_class, player_class, enemy_class, weapon_class, output_as_c
 
                     # deletes old entry without id_num in name
                     del my_dict[translated_name]
-
 
             if output_class == enemy_class:
                 translated_name = translate_jp_to_en_dict(idict, english_data, prefix="MEID", old_prefix="EID")
@@ -363,26 +362,31 @@ def load_files(skill_class, player_class, enemy_class, weapon_class, output_as_c
     if get_terrain:
         terrain = process_data("Terrain.json", terrain, None)
 
+    if check_for_update:
+        print("Checking player data")
+        for xitem in players[1]:
+            item_in_english = False
+            for yitem in players[0]:
+                if players[0][yitem]["id_tag"] == xitem:
+                    item_in_english = True
+            if not item_in_english:
+                print(xitem)
+
+        print("\nChecking enemy data")
+        for xitem in enemies[1]:
+            item_in_english = False
+            for yitem in enemies[0]:
+                if enemies[0][yitem]["id_tag"] == xitem:
+                    item_in_english = True
+            if not item_in_english:
+                print(xitem)
+
+        print("{0}/{1} player entries translated".format(len(players[0]), len(players[1])))
+        print("{0}/{1} enemy entries translated".format(len(enemies[0]), len(enemies[1])))
+
     stop = time()
     print("Time elapsed:", stop - start, "secs")
     return skills, players, enemies, weapons, english_data, growth, move, stage_encount, terrain
-
-
-
-from FireEmblemCombatV2 import Player
-# FIXME: Running this script as a standalone breaks everything
-skills_output, players_output, enemies_output, weapons_output, english_data_output, growth_output, \
-    move_output, stage_encount_output, terrain_output = load_files(None, Player, None, None, output_as_class=False)
-
-print(len(players_output))
-
-for xitem in players_output[1]:
-    item_in_english = False
-    for yitem in players_output[0]:
-        if players_output[0][yitem]["id_tag"] == xitem:
-            item_in_english = True
-    if item_in_english == False:
-        print(xitem)
 
 # if __name__ == "__main__":
 #     from FireEmblemCombatV2 import Skill, Weapon, Enemy, Player
