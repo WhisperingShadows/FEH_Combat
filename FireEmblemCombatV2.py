@@ -1,4 +1,5 @@
 from DijkstraAlgorithm_Speedy_Custom import *
+from typing import Union
 from FEH_definitions import *
 from pprint import pprint
 import FEH_StatGrowth
@@ -49,21 +50,21 @@ CONFIG = {
 # TODO: rework for compatibility with FEH maps (ex. initialize from map file or dict of tiles)
 grid = Graph.init_as_grid(6, 8)
 
-
-#============================================================================================================
+# ============================================================================================================
 # MODULE LEVEL VARIABLE DEFINITIONS START
 
 weapon_advantage = {
-    "Red": "Green",
-    "Blue": "Red",
-    "Green": "Blue"
+    1: 3,
+    2: 1,
+    3: 2
 }
 
+
 # MODULE LEVEL VARIABLE DEFINITIONS END
-#============================================================================================================
+# ============================================================================================================
 
 
-#============================================================================================================
+# ============================================================================================================
 # CUSTOM EXCEPTIONS DEFINITIONS START
 
 class SkillIsIncorrectCategoryException(Exception):
@@ -73,11 +74,12 @@ class SkillIsIncorrectCategoryException(Exception):
 class InvalidWeapon(Exception):
     pass
 
+
 # CUSTOM EXCEPTIONS DEFINITIONS START
-#============================================================================================================
+# ============================================================================================================
 
 
-#============================================================================================================
+# ============================================================================================================
 # CLASS DEFINITIONS START
 
 class ArbitraryAttributeClass:
@@ -484,9 +486,10 @@ class Character(ArbitraryAttributeClass):
         self.move_range = None
         self.rarity = None
         self.level = None
-        self.weapon = None
+        self.weapon: Union[Weapon, None] = None
         self.weapon_class = None
         self.stats = None
+        self.color = None
 
     # sets default values for character attributes
     def set_attribute_values(self):
@@ -503,6 +506,8 @@ class Character(ArbitraryAttributeClass):
             self.level = 1
         if not self.stats:
             self.stats = self.base_stats
+        if not self.color:
+            self.color = weapon_index_to_color_dict[self.weapon_type]
 
         if not self.weapon_class:
             self.weapon_class = WeaponClass.from_dict(weapon_data_by_index[self.weapon_type])
@@ -595,14 +600,47 @@ class Character(ArbitraryAttributeClass):
     def get_distance_to(self, enemy):
         get_distance(self, enemy)
 
-    # TODO: Work on this next coding session
-    # def calc_weapon_triangle(self, enemy):
-    #     if enemy.color == weapon_advantage[self.color]:
-    #         return 0.2
-    #     elif self.color == weapon_advantage[enemy.color]:
-    #         return -0.2
-    #     elif self.color == enemy.color or self.color == "gray" or enemy.color == "gray":
-    #         return 0
+    def calc_weapon_triangle(self, enemy):
+        # if character has weapon triangle advantage, increase attack by 20%
+        if enemy.color == weapon_advantage[self.color]:
+            return 0.2
+        # if character has weapon triangle disadvantage, decrease attack by 20%
+        elif self.color == weapon_advantage[enemy.color]:
+            return -0.2
+        # if character has neither weapon triangle advantage or disadvantage, do not modify attack
+        # if either character or enemy is colorless, weapon triangle does not apply
+        # FIXME: Add support for raven-tomes and weapon triangle advantage against colorless
+        elif self.color == enemy.color or self.color == "gray" or enemy.color == "gray":
+            return 0
+
+    # calculates whether unit has weapon effectiveness against enemy
+    def calc_effectiveness(self, enemy):
+        # assertions used to force IDE autocompletion
+        assert isinstance(enemy, Character)
+        assert isinstance(enemy.weapon, Weapon)
+        assert isinstance(self.weapon, Weapon)
+
+        # bitmask of movement types unit has effectiveness against
+        mov_effective = self.weapon.mov_effective
+        # bitmask of weapon types unit has effectiveness against
+        wep_effective = self.weapon.wep_effective
+
+        # if unit is effective against enemy movement type or enemy has movement weakness,
+        # and enemy does not have a movement shield effect, then deal 50% extra damage
+        if (in_bitmask(enemy.move_type, mov_effective)
+            or in_bitmask(enemy.weapon.mov_weakness, mov_effective)) \
+                and not in_bitmask(enemy.weapon.mov_shield, mov_effective):
+            return 1.5
+
+        # if unit is effective against enemy weapon type or enemy has weapon weakness,
+        # and enemy does not have a weapon shield effect, then deal 50% extra damage
+        if (in_bitmask(enemy.weapon_type, wep_effective)
+            or in_bitmask(enemy.weapon.wep_weakness, wep_effective)) \
+                and not in_bitmask(enemy.weapon.wep_shield, wep_effective):
+            return 1.5
+
+        # otherwise, deal normal damage
+        return 1
 
 
 class Enemy(Character):
@@ -616,7 +654,7 @@ class Player(Character):
 
 
 # CLASS DEFINITIONS END
-#============================================================================================================
+# ============================================================================================================
 
 
 # load all necessary data from JSON files
@@ -625,16 +663,17 @@ skills_data, players_data, enemies_data, weapons_data, english_data, growth_data
 
 weapon_data_by_index = {v["index"]: v for v in weapons_data[1].values()}
 
-
 weapon_index_to_color_dict = {k: v for k, v in zip([i for i in range(24)],
-                               [1, 2, 3, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 0, 1, 2, 3, 0, 1, 2, 3, 0])}
+                                                   [1, 2, 3, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 0, 1, 2, 3, 0, 1, 2, 3,
+                                                    0])}
 
 
-#============================================================================================================
+# ============================================================================================================
 # GENERAL FUNCTION DEFINITIONS START
 
 def get_distance(self: Character, enemy: Character):
     return abs(enemy.pos[0] - self.pos[0]) + abs(enemy.pos[1] - self.pos[1])
+
 
 def in_bitmask(nums, bitmask: int):
     bitmask_list = list(map(int, list(bin(bitmask)[::-1][:-2])))
@@ -666,20 +705,21 @@ def neg(expr):
     return expr
 
 
-def print_grid(grid):
-    x, y = grid.get_grid_width_height()
+def print_grid(input_grid):
+    x, y = input_grid.get_grid_width_height()
 
     for iy in reversed(range(0, y)):
         row = []
         for ix in range(0, x):
-            held = grid.nodes[iy * x + ix].holds
-            if held == None:
+            held = input_grid.nodes[iy * x + ix].holds
+            if held is None:
                 row.append("  ")
             elif held.__class__ == Enemy:
                 row.append("x ")
             elif held.__class__ == Player:
                 row.append("O ")
         print(row)
+
 
 def find_inconsistencies():
     for index in [9, 10, 11, 12, 13]:
@@ -715,11 +755,18 @@ def find_inconsistencies():
         print("Index", index, "has", temp_set)
         print("")
 
+
 # GENERAL FUNCTION DEFINITIONS END
-#============================================================================================================
+# ============================================================================================================
 
 def program_instructions():
-    testchar = Character.from_dict(players_data[1]["PID_クライネ"], weapon="SID_鉄の弓")
+    from pprint import pprint
+    pprint(players_data[0].keys())
+    print("   SPACE BAR   ")
+    pprint(players_data[1].keys())
+    print(len(players_data[0]), len(players_data[1]))
+    print(len(enemies_data[0]), len(enemies_data[1]))
+    testchar = Character.from_dict(players_data[0]["PID_Clarisse"], weapon="SID_鉄の弓")
     testchar.unequip_weapon()
     testchar.equip_weapon("SID_狙撃手の弓")
 
@@ -727,7 +774,7 @@ def program_instructions():
 
     char_wep = Weapon.from_dict(skills_data[0][name])
 
-    char = Character.from_dict(players_data[0]["EIRIK"], pos=(1, 1))
+    # char = Character.from_dict(players_data[0]["EIRIK"], pos=(1, 1))
 
     pass
 
