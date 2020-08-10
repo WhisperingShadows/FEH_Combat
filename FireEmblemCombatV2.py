@@ -1,9 +1,9 @@
 from DijkstraAlgorithm_Speedy_Custom import *
 from typing import Union
 from FEH_definitions import *
-from pprint import pprint
 import FEH_StatGrowth
 from FireEmblemLoadJsonFilesBetterV2 import *
+from math import trunc
 
 # TODO: rework loadfile output dicts to use id_nums tag as keys
 
@@ -474,10 +474,12 @@ class Character(ArbitraryAttributeClass):
         self.move_range = None
         self.rarity = None
         self.level = None
+        self.affinity = None
         self.weapon: Union[Weapon, None] = None
         self.weapon_class = None
         self.stats = None
         self.color = None
+        self.name = None
 
     # sets default values for character attributes
     def set_attribute_values(self):
@@ -492,6 +494,8 @@ class Character(ArbitraryAttributeClass):
             self.rarity = 3
         if not self.level:
             self.level = 1
+        if not self.affinity:
+            self.affinity = 0
         if not self.stats:
             self.stats = self.base_stats
             self.set_stats_to_stats_for_level()
@@ -503,6 +507,9 @@ class Character(ArbitraryAttributeClass):
             self.weapon_class = WeaponClass.from_dict(weapon_data_by_index[self.weapon_type])
 
         self.equip_weapon(weapon=self.weapon)
+
+        if not self.name:
+            self.name = str(translate_jp_to_en_class(self, english_data, prefix="MPID", old_prefix="PID"))
 
     # TODO: Add in support for automatic skill/weapon generation for TT and the like
     # checks whether character may possess weapon
@@ -587,10 +594,10 @@ class Character(ArbitraryAttributeClass):
 
             self.weapon = None
 
-    def get_distance_to(self, enemy):
+    def get_distance_to(self, enemy: "Character"):
         get_distance(self, enemy)
 
-    def calc_weapon_triangle(self, enemy):
+    def calc_weapon_triangle(self, enemy: "Character"):
         # if character has weapon triangle advantage, increase attack by 20%
         if enemy.color == weapon_advantage[self.color]:
             return 0.2
@@ -604,9 +611,8 @@ class Character(ArbitraryAttributeClass):
             return 0
 
     # calculates whether unit has weapon effectiveness against enemy
-    def calc_effectiveness(self, enemy):
+    def calc_effectiveness(self, enemy: "Character"):
         # assertions used to force IDE autocompletion
-        assert isinstance(enemy, Character)
         assert isinstance(enemy.weapon, Weapon)
         assert isinstance(self.weapon, Weapon)
 
@@ -632,10 +638,105 @@ class Character(ArbitraryAttributeClass):
         # otherwise, deal normal damage
         return 1
 
+    def calc_boosted_damage(self, enemy: "Character"):
+        return 0
+        # TODO: add functionality
+
     def set_stats_to_stats_for_level(self):
         stat_increases = FEH_StatGrowth.get_all_stat_increases_for_level(self)
         for stat in stat_increases:
             self.stats[stat] = self.base_stats[stat] + stat_increases[stat]
+
+    def attack_enemy(self, enemy: "Character"):
+        assert isinstance(self.weapon, Weapon)
+        assert isinstance(enemy.weapon, Weapon)
+
+        if enemy.pos == self.pos:
+            print("You can't attack yourself silly")
+            return None
+        if enemy.HP > 0:
+            if self.get_distance_to(enemy) == self.weapon.range:
+                print("Enemy in range, commencing attack")
+                mitigation = enemy.stats["def"] if self.weapon.tome_class == 0 else enemy.stats["res"]
+
+                damage = pos(floor(self.stats["atk"] * self.calc_effectiveness(enemy)) + trunc(
+                    floor(self.stats["atk"] * self.calc_effectiveness(enemy)) * (self.calc_weapon_triangle(enemy) * (
+                                self.affinity + 20) / 20)) + self.calc_boosted_damage(enemy) - mitigation)
+                enemy.HP = enemy.HP - damage
+
+                if enemy.HP > 0:
+                    print(self.name, "dealt", damage, "damage,", enemy.name, "has", enemy.HP, "HP remaining")
+                else:
+                    print(self.name, "dealt", damage, "damage,", enemy.name, "has been defeated")
+                    grid.nodes[grid.get_index_from_xy(enemy.pos)].holds = None
+                return None
+            print("Enemy not in range")
+        else:
+            print("Enemy has already been defeated")
+
+    def attack_node(self, node: Node):
+        enemy = grid.nodes[grid.get_index_from_xy(node)].holds
+        if enemy is not None:
+            self.attack_enemy(enemy)
+        else:
+            print("There is no enemy at position", node)
+
+    def move(self, new_pos: tuple):
+        print(self.name, "moved", get_distance_from_tuples(self.pos, new_pos), "spaces from", self.pos, "to", new_pos)
+        grid.nodes[grid.get_index_from_xy(self.pos)].holds = None
+        self.pos = new_pos
+        grid.nodes[grid.get_index_from_xy(new_pos)].holds = self
+
+    def fight(self, enemy: "Character"):
+        self.attack_enemy(enemy)
+        if enemy.stats["hp"] > 0:
+            enemy.attack_enemy(self)
+            if self.stats["spd"] >= enemy.stats["spd"] + 5 and self.stats["hp"] > 0:
+                self.attack_enemy(enemy)
+            elif enemy.stats["spd"] >= self.stats["spd"] + 5:
+                enemy.attack_enemy(self)
+
+    def move_to_attack(self, enemy: "Character"):
+        endpoints = grid.dijkstra(enemy.pos, eval_to_length=self.weapon.range)
+
+        endpoints = [i for i in [points[-1] if get_distance_from_tuples(enemy.pos, points[-1].data) ==
+                        self.weapon.range else None for (weight, points) in endpoints] if i is not None]
+
+        endpoints = [endpoint for endpoint in endpoints if
+                     get_distance_from_tuples(self.pos, endpoint.data) <= self.move_range]
+
+        if len(endpoints) == 0:
+            print("No available moves that can target", enemy.name)
+        else:
+            endpoint = endpoints[0]
+            print("Chose position", endpoint.data, "from possible positions", [endpoint.data for endpoint in endpoints])
+
+            if endpoint.data == self.pos:
+                print(self.name, "stays where they are and attacks", enemy.name, "at position", enemy.pos)
+            else:
+                print(self.name, "moves to", endpoint.data, "to attack", enemy.name, "at position", enemy.pos)
+                self.move(endpoint.data)
+
+            self.fight(enemy)
+
+    def move_towards(self, enemy: "Character"):
+        weight, nodes = grid.dijkstra(self.pos, enemy.pos, only_end=True)[0]
+
+        distance = get_distance_from_tuples(self.pos, enemy.pos)
+
+        if distance == self.weapon.range:
+            print(self.name, "is already in range and does not move")
+
+        if distance > self.weapon.range:
+            move_distance = distance - self.weapon.range
+            if move_distance > self.move_range:
+                self.move(nodes[self.move_range].data)
+            else:
+                self.move(nodes[move_distance].data)
+            pass
+
+        if distance < self.weapon.range:
+            print(self.name, "is too close and moves further away")
 
 
 class Enemy(Character):
@@ -664,6 +765,9 @@ weapon_index_to_color_dict = {k: v for k, v in zip([i for i in range(24)], color
 
 # ============================================================================================================
 # GENERAL FUNCTION DEFINITIONS START
+
+def get_distance_from_tuples(self: tuple, enemy: tuple):
+    return abs(enemy[0] - self[0]) + abs(enemy[1] - self[1])
 
 def get_distance(self: Character, enemy: Character):
     return abs(enemy.pos[0] - self.pos[0]) + abs(enemy.pos[1] - self.pos[1])
