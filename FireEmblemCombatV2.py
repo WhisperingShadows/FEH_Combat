@@ -1,12 +1,11 @@
 from DijkstraAlgorithm_Speedy_Custom import *
+from typing import Union
 from FEH_definitions import *
 from pprint import pprint
 import FEH_StatGrowth
+from FireEmblemLoadJsonFilesBetterV2 import *
 
 # TODO: rework loadfile output dicts to use id_nums tag as keys
-
-DEBUG = False
-from FireEmblemLoadJsonFilesBetterV2 import *
 
 # FIXME: change casings
 CONFIG = {
@@ -49,21 +48,21 @@ CONFIG = {
 # TODO: rework for compatibility with FEH maps (ex. initialize from map file or dict of tiles)
 grid = Graph.init_as_grid(6, 8)
 
-
-#============================================================================================================
+# ============================================================================================================
 # MODULE LEVEL VARIABLE DEFINITIONS START
 
 weapon_advantage = {
-    "Red": "Green",
-    "Blue": "Red",
-    "Green": "Blue"
+    1: 3,
+    2: 1,
+    3: 2
 }
 
+
 # MODULE LEVEL VARIABLE DEFINITIONS END
-#============================================================================================================
+# ============================================================================================================
 
 
-#============================================================================================================
+# ============================================================================================================
 # CUSTOM EXCEPTIONS DEFINITIONS START
 
 class SkillIsIncorrectCategoryException(Exception):
@@ -73,11 +72,12 @@ class SkillIsIncorrectCategoryException(Exception):
 class InvalidWeapon(Exception):
     pass
 
+
 # CUSTOM EXCEPTIONS DEFINITIONS START
-#============================================================================================================
+# ============================================================================================================
 
 
-#============================================================================================================
+# ============================================================================================================
 # CLASS DEFINITIONS START
 
 class ArbitraryAttributeClass:
@@ -107,9 +107,10 @@ class Switch:
 
         # Create default return function
         # *args consumes "value" argument
-        def default(*args):
+        def default(input_value):
             if verbose:
-                print("No validation method exists for {0}, defaulting to valid".format(key))
+                print("Could not validate value {0} as no validation method exists for {0}, "
+                      "defaulting to valid".format(input_value, key))
 
         # Select validation method
         method_name = 'validate_' + str(key)
@@ -378,17 +379,6 @@ class WeaponClass(ArbitraryAttributeClass):
         self.is_breath = None
         self.is_beast = None
 
-    # def __eq__(self, other):
-    #     if isinstance(other, WeaponClass):
-    #         return self.id_tag == other.id_tag
-    #     elif isinstance(other, int):
-    #         return self.index == other
-    #     elif isinstance(other, str):
-    #         return self.id_tag == other
-    #     else:
-    #         raise TypeError("Type WeaponClass and type {0} cannot be compared".format(type(other)))
-    #     pass
-
 
 class Weapon(Skill):
     def __init__(self, **kwargs):
@@ -484,9 +474,10 @@ class Character(ArbitraryAttributeClass):
         self.move_range = None
         self.rarity = None
         self.level = None
-        self.weapon = None
+        self.weapon: Union[Weapon, None] = None
         self.weapon_class = None
         self.stats = None
+        self.color = None
 
     # sets default values for character attributes
     def set_attribute_values(self):
@@ -503,6 +494,10 @@ class Character(ArbitraryAttributeClass):
             self.level = 1
         if not self.stats:
             self.stats = self.base_stats
+            self.set_stats_to_stats_for_level()
+
+        if not self.color:
+            self.color = weapon_index_to_color_dict[self.weapon_type]
 
         if not self.weapon_class:
             self.weapon_class = WeaponClass.from_dict(weapon_data_by_index[self.weapon_type])
@@ -595,14 +590,52 @@ class Character(ArbitraryAttributeClass):
     def get_distance_to(self, enemy):
         get_distance(self, enemy)
 
-    # TODO: Work on this next coding session
-    # def calc_weapon_triangle(self, enemy):
-    #     if enemy.color == weapon_advantage[self.color]:
-    #         return 0.2
-    #     elif self.color == weapon_advantage[enemy.color]:
-    #         return -0.2
-    #     elif self.color == enemy.color or self.color == "gray" or enemy.color == "gray":
-    #         return 0
+    def calc_weapon_triangle(self, enemy):
+        # if character has weapon triangle advantage, increase attack by 20%
+        if enemy.color == weapon_advantage[self.color]:
+            return 0.2
+        # if character has weapon triangle disadvantage, decrease attack by 20%
+        elif self.color == weapon_advantage[enemy.color]:
+            return -0.2
+        # if character has neither weapon triangle advantage or disadvantage, do not modify attack
+        # if either character or enemy is colorless, weapon triangle does not apply
+        # FIXME: Add support for raven-tomes and weapon triangle advantage against colorless
+        elif self.color == enemy.color or self.color == "gray" or enemy.color == "gray":
+            return 0
+
+    # calculates whether unit has weapon effectiveness against enemy
+    def calc_effectiveness(self, enemy):
+        # assertions used to force IDE autocompletion
+        assert isinstance(enemy, Character)
+        assert isinstance(enemy.weapon, Weapon)
+        assert isinstance(self.weapon, Weapon)
+
+        # bitmask of movement types unit has effectiveness against
+        mov_effective = self.weapon.mov_effective
+        # bitmask of weapon types unit has effectiveness against
+        wep_effective = self.weapon.wep_effective
+
+        # if unit is effective against enemy movement type or enemy has movement weakness,
+        # and enemy does not have a movement shield effect, then deal 50% extra damage
+        if (in_bitmask(enemy.move_type, mov_effective)
+            or in_bitmask(enemy.weapon.mov_weakness, mov_effective)) \
+                and not in_bitmask(enemy.weapon.mov_shield, mov_effective):
+            return 1.5
+
+        # if unit is effective against enemy weapon type or enemy has weapon weakness,
+        # and enemy does not have a weapon shield effect, then deal 50% extra damage
+        if (in_bitmask(enemy.weapon_type, wep_effective)
+            or in_bitmask(enemy.weapon.wep_weakness, wep_effective)) \
+                and not in_bitmask(enemy.weapon.wep_shield, wep_effective):
+            return 1.5
+
+        # otherwise, deal normal damage
+        return 1
+
+    def set_stats_to_stats_for_level(self):
+        stat_increases = FEH_StatGrowth.get_all_stat_increases_for_level(self)
+        for stat in stat_increases:
+            self.stats[stat] = self.base_stats[stat] + stat_increases[stat]
 
 
 class Enemy(Character):
@@ -616,7 +649,7 @@ class Player(Character):
 
 
 # CLASS DEFINITIONS END
-#============================================================================================================
+# ============================================================================================================
 
 
 # load all necessary data from JSON files
@@ -625,16 +658,16 @@ skills_data, players_data, enemies_data, weapons_data, english_data, growth_data
 
 weapon_data_by_index = {v["index"]: v for v in weapons_data[1].values()}
 
+colors_by_weapon_index = [1, 2, 3, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 0, 1, 2, 3, 0, 1, 2, 3, 0]
+weapon_index_to_color_dict = {k: v for k, v in zip([i for i in range(24)], colors_by_weapon_index)}
 
-weapon_index_to_color_dict = {k: v for k, v in zip([i for i in range(24)],
-                               [1, 2, 3, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 0, 1, 2, 3, 0, 1, 2, 3, 0])}
 
-
-#============================================================================================================
+# ============================================================================================================
 # GENERAL FUNCTION DEFINITIONS START
 
 def get_distance(self: Character, enemy: Character):
     return abs(enemy.pos[0] - self.pos[0]) + abs(enemy.pos[1] - self.pos[1])
+
 
 def in_bitmask(nums, bitmask: int):
     bitmask_list = list(map(int, list(bin(bitmask)[::-1][:-2])))
@@ -666,20 +699,21 @@ def neg(expr):
     return expr
 
 
-def print_grid(grid):
-    x, y = grid.get_grid_width_height()
+def print_grid(input_grid):
+    x, y = input_grid.get_grid_width_height()
 
     for iy in reversed(range(0, y)):
         row = []
         for ix in range(0, x):
-            held = grid.nodes[iy * x + ix].holds
-            if held == None:
+            held = input_grid.nodes[iy * x + ix].holds
+            if held is None:
                 row.append("  ")
             elif held.__class__ == Enemy:
                 row.append("x ")
             elif held.__class__ == Player:
                 row.append("O ")
         print(row)
+
 
 def find_inconsistencies():
     for index in [9, 10, 11, 12, 13]:
@@ -715,19 +749,17 @@ def find_inconsistencies():
         print("Index", index, "has", temp_set)
         print("")
 
+
 # GENERAL FUNCTION DEFINITIONS END
-#============================================================================================================
+# ============================================================================================================
 
 def program_instructions():
-    testchar = Character.from_dict(players_data[1]["PID_クライネ"], weapon="SID_鉄の弓")
+    testchar = Character.from_dict(players_data[0]["PID_Clarisse"], weapon="SID_鉄の弓")
+    print(testchar.stats)
     testchar.unequip_weapon()
+    print(testchar.stats)
     testchar.equip_weapon("SID_狙撃手の弓")
-
-    name = translate_jp_to_en_dict(skills_data[1]["SID_ジークリンデ"], english_data, is_skill=True)
-
-    char_wep = Weapon.from_dict(skills_data[0][name])
-
-    char = Character.from_dict(players_data[0]["EIRIK"], pos=(1, 1))
+    print(testchar.stats)
 
     pass
 
