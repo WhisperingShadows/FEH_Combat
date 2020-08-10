@@ -3,11 +3,9 @@ from typing import Union
 from FEH_definitions import *
 from pprint import pprint
 import FEH_StatGrowth
+from FireEmblemLoadJsonFilesBetterV2 import *
 
 # TODO: rework loadfile output dicts to use id_nums tag as keys
-
-DEBUG = False
-from FireEmblemLoadJsonFilesBetterV2 import *
 
 # FIXME: change casings
 CONFIG = {
@@ -109,9 +107,10 @@ class Switch:
 
         # Create default return function
         # *args consumes "value" argument
-        def default(*args):
+        def default(input_value):
             if verbose:
-                print("No validation method exists for {0}, defaulting to valid".format(key))
+                print("Could not validate value {0} as no validation method exists for {0}, "
+                      "defaulting to valid".format(input_value, key))
 
         # Select validation method
         method_name = 'validate_' + str(key)
@@ -380,17 +379,6 @@ class WeaponClass(ArbitraryAttributeClass):
         self.is_breath = None
         self.is_beast = None
 
-    # def __eq__(self, other):
-    #     if isinstance(other, WeaponClass):
-    #         return self.id_tag == other.id_tag
-    #     elif isinstance(other, int):
-    #         return self.index == other
-    #     elif isinstance(other, str):
-    #         return self.id_tag == other
-    #     else:
-    #         raise TypeError("Type WeaponClass and type {0} cannot be compared".format(type(other)))
-    #     pass
-
 
 class Weapon(Skill):
     def __init__(self, **kwargs):
@@ -506,6 +494,8 @@ class Character(ArbitraryAttributeClass):
             self.level = 1
         if not self.stats:
             self.stats = self.base_stats
+            self.set_stats_to_stats_for_level()
+
         if not self.color:
             self.color = weapon_index_to_color_dict[self.weapon_type]
 
@@ -642,6 +632,11 @@ class Character(ArbitraryAttributeClass):
         # otherwise, deal normal damage
         return 1
 
+    def set_stats_to_stats_for_level(self):
+        stat_increases = FEH_StatGrowth.get_all_stat_increases_for_level(self)
+        for stat in stat_increases:
+            self.stats[stat] = self.base_stats[stat] + stat_increases[stat]
+
 
 class Enemy(Character):
     def __init__(self, **kwargs):
@@ -663,9 +658,8 @@ skills_data, players_data, enemies_data, weapons_data, english_data, growth_data
 
 weapon_data_by_index = {v["index"]: v for v in weapons_data[1].values()}
 
-weapon_index_to_color_dict = {k: v for k, v in zip([i for i in range(24)],
-                                                   [1, 2, 3, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 0, 1, 2, 3, 0, 1, 2, 3,
-                                                    0])}
+colors_by_weapon_index = [1, 2, 3, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 0, 1, 2, 3, 0, 1, 2, 3, 0]
+weapon_index_to_color_dict = {k: v for k, v in zip([i for i in range(24)], colors_by_weapon_index)}
 
 
 # ============================================================================================================
@@ -760,21 +754,12 @@ def find_inconsistencies():
 # ============================================================================================================
 
 def program_instructions():
-    from pprint import pprint
-    pprint(players_data[0].keys())
-    print("   SPACE BAR   ")
-    pprint(players_data[1].keys())
-    print(len(players_data[0]), len(players_data[1]))
-    print(len(enemies_data[0]), len(enemies_data[1]))
     testchar = Character.from_dict(players_data[0]["PID_Clarisse"], weapon="SID_鉄の弓")
+    print(testchar.stats)
     testchar.unequip_weapon()
+    print(testchar.stats)
     testchar.equip_weapon("SID_狙撃手の弓")
-
-    name = translate_jp_to_en_dict(skills_data[1]["SID_ジークリンデ"], english_data, is_skill=True)
-
-    char_wep = Weapon.from_dict(skills_data[0][name])
-
-    # char = Character.from_dict(players_data[0]["EIRIK"], pos=(1, 1))
+    print(testchar.stats)
 
     pass
 
