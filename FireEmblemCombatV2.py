@@ -1,9 +1,9 @@
 from DijkstraAlgorithm_Speedy_Custom import *
 from typing import Union
-from FEH_definitions import *
+# from FEH_definitions import *
 import FEH_StatGrowth
 from FireEmblemLoadJsonFilesBetterV2 import *
-from math import trunc
+from math import trunc, floor
 
 # TODO: rework loadfile output dicts to use id_nums tag as keys
 
@@ -46,7 +46,7 @@ CONFIG = {
 }
 
 # TODO: rework for compatibility with FEH maps (ex. initialize from map file or dict of tiles)
-grid = Graph.init_as_grid(6, 8)
+GRID = Graph.init_as_grid(6, 8)
 
 # ============================================================================================================
 # MODULE LEVEL VARIABLE DEFINITIONS START
@@ -56,6 +56,22 @@ weapon_advantage = {
     2: 1,
     3: 2
 }
+
+char_list = []
+
+category_number_to_name_dict = {
+    0: "weapon",
+    1: "assist",
+    2: "special",
+    3: "a",
+    4: "b",
+    5: "c",
+    6: "seal",
+    7: "refined weapon skill",
+    8: "beast transformation"
+}
+
+category_name_to_number_dict = {v:k for k,v in category_number_to_name_dict.items()}
 
 
 # MODULE LEVEL VARIABLE DEFINITIONS END
@@ -144,7 +160,7 @@ class Switch:
 
     @staticmethod
     def validate_pos(value):
-        grid_size = grid.get_grid_width_height()
+        grid_size = GRID.get_grid_width_height()
         if isinstance(value, tuple):
             if 1 <= value[0] <= grid_size[0] and 1 <= value[1] <= grid_size[1]:
                 return 1
@@ -342,8 +358,11 @@ class Skill(ArbitraryAttributeClass):
         #   - 2: This skill may be equipped by random units that own the skill.
         self.random_mode = None
 
+        self.range_shape = None
+
+        self.target_either = None
+
         # Unknown usage
-        # self.range_shape = range_shape
         # self.id_tag2 = id_tag2
         # self.next_seal = next_seal
         # self.prev_seal = prev_seal
@@ -353,6 +372,13 @@ class Skill(ArbitraryAttributeClass):
         # self.ss_great_badge = ss_great_badge
 
         pass
+
+    def targeted(self, items):
+
+        if not self.target_either:
+            return [i for i in items if i.target_mov == self.target_mov and i.target_wep == self.target_wep]
+        else:
+            return [i for i in items if i.target_mov == self.target_mov or i.target_wep == self.target_wep]
 
 
 # NOT TO BE CONFUSED WITH THE WEAPON CLASS
@@ -426,6 +452,8 @@ class Character(ArbitraryAttributeClass):
         super().__init__(**kwargs)
         self.set_attribute_values()
 
+        char_list.append(self)
+
     def __setattr__(self, key, value):
 
         if Switch.validate_character_attribute(key, value):
@@ -480,13 +508,14 @@ class Character(ArbitraryAttributeClass):
         self.stats = None
         self.color = None
         self.name = None
+        self.equipped_skills = None
 
     # sets default values for character attributes
     def set_attribute_values(self):
         # if character's position is defined, sets "node" attribute to a Node object in the map grid and
         # sets node's "holds" attribute to character
         if self.pos:
-            self.node = grid.nodes[grid.get_index_from_xy(self.pos)]
+            self.node = GRID.nodes[GRID.get_index_from_xy(self.pos)]
             self.node.holds = self
         if not self.move_range:
             self.move_range = move_data[self.move_type]["range"]
@@ -511,9 +540,102 @@ class Character(ArbitraryAttributeClass):
         if not self.name:
             self.name = str(translate_jp_to_en_class(self, english_data, prefix="MPID", old_prefix="PID"))
 
+        if not self.equipped_skills:
+            self.equipped_skills = {
+                "assist": None,
+                "special": None,
+                "a": None,
+                "b": None,
+                "c": None,
+                "seal": None
+            }
+
+
+    def validate_skill(self, skill: Skill):
+        # checks if character is of correct weapon type and move type
+        if in_bitmask(self.weapon_type, skill.wep_equip) and in_bitmask(self.move_type, skill.mov_equip):
+
+            if skill.exclusive:
+                # checks if character owns exclusive skill
+                owns_skill = False
+                for skillset in self.skills:
+                    if skill.id_tag in skillset:
+                        owns_skill = True
+                        break
+                if not owns_skill:
+                    return False
+
+            if skill.enemy_only:
+                # checks if character is an enemy
+                if not (self.__class__ == Enemy or self.id_tag.startswith("EID_")):
+                    return False
+
+            if skill.healing:
+                # checks if character is a staff unit
+                if self.weapon_type != 15:
+                    return False
+
+            return True
+
+        return False
+        pass
+
+    def get_skill(self, category: str):
+        skill = None
+        category = category_name_to_number_dict[category]
+        for i in range(self.rarity):
+            skill = self.skills[i][category] if self.skills[i][category] is not None else skill
+        if skills_data[1][skill]["category"] == category:
+            return Skill.from_dict(skills_data[1][skill])
+        else:
+            raise SkillIsIncorrectCategoryException(
+                "Skill should be a category {0} skill, received category {1} skill instead".format(category, str(
+                skills_data[1][skill]["category"]))
+            )
+        pass
+
+
+    def equip_skill(self, skill: str):
+        if skill is not None:
+            # create Skill object from weapon id
+            skill = Skill.from_dict(skills_data[1][skill])
+            # check whether character can equip skill
+            if self.validate_skill(skill):
+
+                category = category_number_to_name_dict[skill.category]
+
+                # if character already has a weapon equipped, unequip it
+                if self.equipped_skills[category]:
+                    self.unequip_skill(category)
+
+                # # add weapon's might to character's attack stat
+                # self.stats["atk"] += weapon.might
+
+                # add skill's stat bonuses to character's stats
+                for stat in skill.stats:
+                    self.stats[stat] += skill.stats[stat]
+
+                # update character's equipped_skills attribute with skill
+                self.equipped_skills[category] = skill
+
+            else:
+                # if skill fails to pass validation, character cannot equip skill
+                raise InvalidWeapon("Character {0} does not have access to skill {1}".format(self, skill.id_tag))
+
+
+    def unequip_skill(self, category: str):
+        skill = self.equipped_skills[category]
+        if skill is not None:
+            if isinstance(skill, Skill):
+                for stat in skill.stats:
+                    self.stats[stat] -= skill.stats[stat]
+
+            self.equipped_skills[category] = None
+        pass
+
     # TODO: Add in support for automatic skill/weapon generation for TT and the like
     # checks whether character may possess weapon
-    def validate_weapon(self, weapon):
+    def validate_weapon(self, weapon: Weapon):
         """
 
         :type weapon: Weapon
@@ -657,25 +779,26 @@ class Character(ArbitraryAttributeClass):
         if enemy.HP > 0:
             if self.get_distance_to(enemy) == self.weapon.range:
                 print("Enemy in range, commencing attack")
+                # TODO: Add support for adaptive damage
                 mitigation = enemy.stats["def"] if self.weapon.tome_class == 0 else enemy.stats["res"]
 
                 damage = pos(floor(self.stats["atk"] * self.calc_effectiveness(enemy)) + trunc(
                     floor(self.stats["atk"] * self.calc_effectiveness(enemy)) * (self.calc_weapon_triangle(enemy) * (
-                                self.affinity + 20) / 20)) + self.calc_boosted_damage(enemy) - mitigation)
+                            self.affinity + 20) / 20)) + self.calc_boosted_damage(enemy) - mitigation)
                 enemy.HP = enemy.HP - damage
 
                 if enemy.HP > 0:
                     print(self.name, "dealt", damage, "damage,", enemy.name, "has", enemy.HP, "HP remaining")
                 else:
                     print(self.name, "dealt", damage, "damage,", enemy.name, "has been defeated")
-                    grid.nodes[grid.get_index_from_xy(enemy.pos)].holds = None
+                    GRID.nodes[GRID.get_index_from_xy(enemy.pos)].holds = None
                 return None
             print("Enemy not in range")
         else:
             print("Enemy has already been defeated")
 
     def attack_node(self, node: Node):
-        enemy = grid.nodes[grid.get_index_from_xy(node)].holds
+        enemy = GRID.nodes[GRID.get_index_from_xy(node)].holds
         if enemy is not None:
             self.attack_enemy(enemy)
         else:
@@ -683,13 +806,16 @@ class Character(ArbitraryAttributeClass):
 
     def move(self, new_pos: tuple):
         print(self.name, "moved", get_distance_from_tuples(self.pos, new_pos), "spaces from", self.pos, "to", new_pos)
-        grid.nodes[grid.get_index_from_xy(self.pos)].holds = None
+        GRID.nodes[GRID.get_index_from_xy(self.pos)].holds = None
         self.pos = new_pos
-        grid.nodes[grid.get_index_from_xy(new_pos)].holds = self
+        GRID.nodes[GRID.get_index_from_xy(new_pos)].holds = self
 
     def fight(self, enemy: "Character"):
+        # TODO: Add check for vantage skill
         self.attack_enemy(enemy)
         if enemy.stats["hp"] > 0:
+            # TODO: Add checks for "prevent counterattack" status, weapon range, distant/close counter skills
+            # TODO: Add check for desperation skill
             enemy.attack_enemy(self)
             if self.stats["spd"] >= enemy.stats["spd"] + 5 and self.stats["hp"] > 0:
                 self.attack_enemy(enemy)
@@ -697,10 +823,11 @@ class Character(ArbitraryAttributeClass):
                 enemy.attack_enemy(self)
 
     def move_to_attack(self, enemy: "Character"):
-        endpoints = grid.dijkstra(enemy.pos, eval_to_length=self.weapon.range)
+        endpoints = GRID.dijkstra(enemy.pos, eval_to_length=self.weapon.range)
 
         endpoints = [i for i in [points[-1] if get_distance_from_tuples(enemy.pos, points[-1].data) ==
-                        self.weapon.range else None for (weight, points) in endpoints] if i is not None]
+                                               self.weapon.range else None for (weight, points) in endpoints] if
+                     i is not None]
 
         endpoints = [endpoint for endpoint in endpoints if
                      get_distance_from_tuples(self.pos, endpoint.data) <= self.move_range]
@@ -720,7 +847,7 @@ class Character(ArbitraryAttributeClass):
             self.fight(enemy)
 
     def move_towards(self, enemy: "Character"):
-        weight, nodes = grid.dijkstra(self.pos, enemy.pos, only_end=True)[0]
+        weight, nodes = GRID.dijkstra(self.pos, enemy.pos, only_end=True)[0]
 
         distance = get_distance_from_tuples(self.pos, enemy.pos)
 
@@ -755,7 +882,7 @@ class Player(Character):
 
 # load all necessary data from JSON files
 skills_data, players_data, enemies_data, weapons_data, english_data, growth_data, move_data, stage_encount_data, \
-    terrain_data = load_files(Skill, Player, Enemy, Weapon, output_as_class=False)
+terrain_data = load_files(Skill, Player, Enemy, Weapon, output_as_class=False)
 
 weapon_data_by_index = {v["index"]: v for v in weapons_data[1].values()}
 
@@ -764,10 +891,11 @@ weapon_index_to_color_dict = {k: v for k, v in zip([i for i in range(24)], color
 
 
 # ============================================================================================================
-# GENERAL FUNCTION DEFINITIONS START
+# GENERAL DEFINITIONS START
 
 def get_distance_from_tuples(self: tuple, enemy: tuple):
     return abs(enemy[0] - self[0]) + abs(enemy[1] - self[1])
+
 
 def get_distance(self: Character, enemy: Character):
     return abs(enemy.pos[0] - self.pos[0]) + abs(enemy.pos[1] - self.pos[1])
@@ -854,8 +982,83 @@ def find_inconsistencies():
         print("")
 
 
-# GENERAL FUNCTION DEFINITIONS END
+def in_range(away, origin, distance):
+    if get_distance_from_tuples(away, origin) > distance:
+        return 0
+    return 1
+
+
+def ones(x):
+    return x % 10
+
+
+def tens(x):
+    return floor(x / 10) % 10
+
+
+def hundreds(x):
+    return floor(x / 100) % 10
+
+
+def tens_ones(x):
+    return x % 100
+
+
+condition_dict = {
+    "within_range": "in_range(node.data, origin, distance)",
+    "within_columns": "in_range((node.data[0], 0), (origin[0], 0), distance)",
+    "within_rows": "in_range((0, node.data[1]), (0, origin[1]), distance)",
+    "in_cardinals": "node.data[0] == origin[0] or node.data[1] == origin[1]",
+    "within_area": "in_range((node.data[0], 0), (origin[0], 0), ones(distance)) and "
+                   "in_range((0, node.data[1]), (0, origin[1]), tens(distance))"
+}
+
+
+def within_range_abstracted(unit: Character, skill: Skill, condition, grid: Graph = GRID):
+    within_range_list = list()
+
+    origin = unit.pos
+    distance = skill.skill_range
+
+    for node in grid.nodes:
+        if node.holds and node.holds != unit and eval(condition_dict[condition]):
+            within_range_list.append(node.holds)
+
+    return within_range_list
+
+
+WITHIN_RANGE_EX_dict = {0: "within_range",  # within range distance of unit
+                        1: "within_range",  # same as 0; used by duo skills
+                        2: "within_area",  # within ONES(distance) rows and TENS(distance) columns of unit
+                        3: "in_cardinals",  # in cardinal directions of unit
+                        4: "within_columns",  # within distance columns of unit
+                        5: "within_rows",  # within distance rows of unit
+                        }
+
+
+# returns list of characters within range of unit where range is determined by range_shape
+def within_range_ex_abstract(range_shape: int, unit, skill, grid: Graph = GRID):
+    return within_range_abstracted(unit, skill, WITHIN_RANGE_EX_dict[range_shape], grid)
+
+
+def foes(items):
+    return [i for i in items if i.__class__ == Enemy]
+
+
+def allies(items):
+    return [i for i in items if i.__class__ == Player]
+
+
+
+# GENERAL DEFINITIONS END
 # ============================================================================================================
+
+def main_game_loop():
+
+
+
+    pass
+
 
 def program_instructions():
     testchar = Character.from_dict(players_data[0]["PID_Clarisse"], weapon="SID_鉄の弓")
@@ -864,6 +1067,8 @@ def program_instructions():
     print(testchar.stats)
     testchar.equip_weapon("SID_狙撃手の弓")
     print(testchar.stats)
+
+    print("")
 
     pass
 
